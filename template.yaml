@@ -1,0 +1,260 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SAST Security Scanner - Serverless scan pipeline for GitHub repos
+
+Parameters:
+  GitHubWebhookSecret:
+    Type: String
+    NoEcho: true
+    Description: Secret used to verify GitHub webhook signatures
+  GitHubToken:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: GitHub personal access token for cloning private repos (optional)
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        DYNAMODB_TABLE: !Ref ScansTable
+        S3_REPORTS_BUCKET: !Ref ReportsBucket
+
+Resources:
+
+  # ============================================================
+  # API Gateway - single HTTP API for webhooks and dashboard
+  # ============================================================
+  ScannerApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: prod
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - X-Hub-Signature-256
+          - X-GitHub-Event
+
+  # ============================================================
+  # SQS Queue - buffers scan jobs during traffic spikes
+  # ============================================================
+  ScanJobQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sast-scan-jobs
+      VisibilityTimeout: 330  # slightly more than scanner Lambda timeout
+      MessageRetentionPeriod: 86400  # 24 hours
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ScanJobDLQ.Arn
+        maxReceiveCount: 3
+
+  ScanJobDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sast-scan-jobs-dlq
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  # ============================================================
+  # DynamoDB Table - scan metadata for fast queries
+  # ============================================================
+  ScansTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: sast-scans
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: repoName
+          AttributeType: S
+        - AttributeName: scanId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: repoName
+          KeyType: HASH
+        - AttributeName: scanId
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: scanId-index
+          KeySchema:
+            - AttributeName: scanId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  # ============================================================
+  # S3 Bucket - full scan reports (JSON)
+  # ============================================================
+  ReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'sast-reports-${AWS::AccountId}'
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToIA
+            Status: Enabled
+            Transitions:
+              - StorageClass: STANDARD_IA
+                TransitionInDays: 30
+
+  # ============================================================
+  # S3 Bucket - static frontend dashboard
+  # ============================================================
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'sast-dashboard-${AWS::AccountId}'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${FrontendBucket.Arn}/*'
+
+  # ============================================================
+  # Lambda 1 - Webhook Handler
+  # Receives GitHub webhooks, validates signature, enqueues scan job
+  # ============================================================
+  WebhookHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: sast-webhook-handler
+      CodeUri: src/webhook-handler/
+      Handler: index.handler
+      MemorySize: 256
+      Timeout: 30
+      Environment:
+        Variables:
+          SQS_QUEUE_URL: !Ref ScanJobQueue
+          GITHUB_WEBHOOK_SECRET: !Ref GitHubWebhookSecret
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt ScanJobQueue.QueueName
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ScansTable
+      Events:
+        Webhook:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ScannerApi
+            Path: /webhook
+            Method: POST
+
+  # ============================================================
+  # Lambda 2 - Scanner (Container Image)
+  # Clones repo, runs SAST scanner, stores results
+  # ============================================================
+  ScannerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: sast-scanner
+      PackageType: Image
+      MemorySize: 1024
+      Timeout: 300
+      Environment:
+        Variables:
+          GITHUB_TOKEN: !Ref GitHubToken
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ScansTable
+        - S3CrudPolicy:
+            BucketName: !Ref ReportsBucket
+      Events:
+        SQSTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ScanJobQueue.Arn
+            BatchSize: 1
+    Metadata:
+      DockerTag: latest
+      DockerContext: ./src/scanner
+      Dockerfile: Dockerfile
+
+  # ============================================================
+  # Lambda 3 - Query API
+  # Dashboard backend: list scans, get details, get reports
+  # ============================================================
+  QueryApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: sast-query-api
+      CodeUri: src/query-api/
+      Handler: index.handler
+      MemorySize: 256
+      Timeout: 30
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ScansTable
+        - S3ReadPolicy:
+            BucketName: !Ref ReportsBucket
+      Events:
+        ListScans:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ScannerApi
+            Path: /scans
+            Method: GET
+        GetScan:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ScannerApi
+            Path: /scans/{scanId}
+            Method: GET
+        GetReport:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ScannerApi
+            Path: /scans/{scanId}/report
+            Method: GET
+        GetStats:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ScannerApi
+            Path: /stats
+            Method: GET
+
+# ============================================================
+# Outputs
+# ============================================================
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${ScannerApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+
+  WebhookUrl:
+    Description: URL to configure as GitHub webhook
+    Value: !Sub 'https://${ScannerApi}.execute-api.${AWS::Region}.amazonaws.com/prod/webhook'
+
+  DashboardUrl:
+    Description: Frontend dashboard URL
+    Value: !GetAtt FrontendBucket.WebsiteURL
+
+  ReportsBucket:
+    Description: S3 bucket for scan reports
+    Value: !Ref ReportsBucket
+
+  ScansTable:
+    Description: DynamoDB table for scan metadata
+    Value: !Ref ScansTable
