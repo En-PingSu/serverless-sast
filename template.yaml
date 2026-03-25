@@ -140,6 +140,7 @@ Resources:
   WebhookHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Role: arn:aws:iam::030919480532:role/LabRole
       FunctionName: sast-webhook-handler
       CodeUri: src/webhook-handler/
       Handler: index.handler
@@ -169,10 +170,13 @@ Resources:
   ScannerFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Role: arn:aws:iam::030919480532:role/LabRole
       FunctionName: sast-scanner
       PackageType: Image
       MemorySize: 1024
       Timeout: 300
+      Runtime: null
+      Handler: null
       Environment:
         Variables:
           GITHUB_TOKEN: !Ref GitHubToken
@@ -199,6 +203,7 @@ Resources:
   QueryApiFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Role: arn:aws:iam::030919480532:role/LabRole
       FunctionName: sast-query-api
       CodeUri: src/query-api/
       Handler: index.handler
