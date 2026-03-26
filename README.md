@@ -73,6 +73,12 @@ Key outputs:
 
 ---
 
+### Cleanup
+
+```bash
+sam delete
+```
+
 ## Testing the SAST Scanner Pipeline
 
 ### Step 1 — Get Your API URL
