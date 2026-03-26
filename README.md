@@ -14,7 +14,7 @@
 - [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) installed
 - Docker running (required for building the scanner Lambda container image)
 - Node.js 20.x
-- A GitHub personal access token with `repo` scope
+- A GitHub personal access token with `Contents: Read-only` permission (only needed for scanning private repos)
 
 ### Generate a Webhook Secret
 
@@ -25,6 +25,16 @@ python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 Save this value, you'll need it for both AWS deployment and GitHub webhook configuration.
+
+### Find Your LabRole ARN
+
+Each team member has a different AWS account ID in Learner Lab. Get yours with:
+
+```bash
+aws sts get-caller-identity --query Account --output text
+```
+
+Your LabRole ARN will be: `arn:aws:iam::<your-account-id>:role/LabRole`
 
 ### Build
 
@@ -44,8 +54,9 @@ You will be prompted for:
 
 | Parameter             | Description                                      |
 |-----------------------|--------------------------------------------------|
+| `LabRoleArn`          | Your LabRole ARN (see above)                     |
 | `GitHubWebhookSecret` | The random secret you generated above            |
-| `GitHubToken`          | Your GitHub personal access token                |
+| `GitHubToken`          | GitHub personal access token (optional, only for private repos) |
 
 For subsequent deployments:
 
@@ -83,9 +94,8 @@ sam delete
 
 ### Step 1 — Get Your API URL
 
-In Windows, Powershell
-```powershell
-sam list stack-outputs --stack-name cs6620
+```bash
+sam list stack-outputs --stack-name sast-scanner
 ```
 
 Copy the `WebhookUrl` from the output.
@@ -96,14 +106,14 @@ Copy the `WebhookUrl` from the output.
 2. **Payload URL**: paste the `WebhookUrl`
 3. **Content type**: `application/json`
 4. **Secret**: the same `GitHubWebhookSecret` you used during deployment
-5. **Events**: select "Just the push event"
+5. **Events**: select "Just the push event" (or "Pushes" and "Pull requests")
 6. Click **Add webhook**
 
 ### Step 3 — Trigger a Test Push
 
 Make any small change in the repo and push it:
 
-```powershell
+```bash
 git commit --allow-empty -m "test scan trigger"
 git push
 ```
@@ -112,8 +122,8 @@ git push
 
 Check each stage to confirm it worked:
 
-```powershell
-# Check webhook handler logs
+```bash
+# Check webhook handler logs (--follow streams live, or use --since 5m to fetch recent logs and exit)
 aws logs tail /aws/lambda/sast-webhook-handler --follow
 
 # Check scanner logs
@@ -127,3 +137,4 @@ aws dynamodb scan --table-name sast-scans
 
 # Check the API endpoint
 curl <ApiUrl>/scans
+```

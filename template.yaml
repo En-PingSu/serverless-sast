@@ -12,6 +12,9 @@ Parameters:
     NoEcho: true
     Default: ''
     Description: GitHub personal access token for cloning private repos (optional)
+  LabRoleArn:
+    Type: String
+    Description: ARN of the IAM role for Lambda functions (e.g. arn:aws:iam::<account-id>:role/LabRole)
 
 Globals:
   Function:
@@ -140,7 +143,7 @@ Resources:
   WebhookHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Role: arn:aws:iam::030919480532:role/LabRole
+      Role: !Ref LabRoleArn
       FunctionName: sast-webhook-handler
       CodeUri: src/webhook-handler/
       Handler: index.handler
@@ -170,7 +173,7 @@ Resources:
   ScannerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Role: arn:aws:iam::030919480532:role/LabRole
+      Role: !Ref LabRoleArn
       FunctionName: sast-scanner
       PackageType: Image
       MemorySize: 1024
@@ -203,7 +206,7 @@ Resources:
   QueryApiFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Role: arn:aws:iam::030919480532:role/LabRole
+      Role: !Ref LabRoleArn
       FunctionName: sast-query-api
       CodeUri: src/query-api/
       Handler: index.handler

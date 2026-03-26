@@ -15,7 +15,10 @@ function verifySignature(payload, signature) {
     .createHmac('sha256', GITHUB_WEBHOOK_SECRET)
     .update(payload, 'utf-8')
     .digest('hex');
-  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  const sigBuf = Buffer.from(signature);
+  const expBuf = Buffer.from(expected);
+  if (sigBuf.length !== expBuf.length) return false;
+  return crypto.timingSafeEqual(sigBuf, expBuf);
 }
 
 export const handler = async (event) => {

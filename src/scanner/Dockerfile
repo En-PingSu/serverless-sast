@@ -4,7 +4,7 @@ FROM public.ecr.aws/lambda/nodejs:20
 RUN dnf install -y git && dnf clean all
 
 COPY package*.json ./
-RUN npm ci --production
+RUN npm install --omit=dev
 
 COPY . .
 
