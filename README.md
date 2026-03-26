@@ -1,5 +1,11 @@
 # SAST Security Scanner
 
+## Team Members
+
+- En-Ping su
+- Wendi Zhong
+- Yiyang Wang
+
 ## Deployment
 
 ### Prerequisites
