@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-API_URL="${API_URL:-https://eudvkuuq93.execute-api.us-east-1.amazonaws.com/prod}"
+DEFAULT_URL=$(aws cloudformation describe-stacks --stack-name sast-scanner --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text 2>/dev/null)
+API_URL="${API_URL:-${DEFAULT_URL:-https://eudvkuuq93.execute-api.us-east-1.amazonaws.com/prod}}"
 SECRET="${WEBHOOK_SECRET:-test123}"
 PASS=0
 FAIL=0
