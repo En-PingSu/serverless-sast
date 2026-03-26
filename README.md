@@ -2,7 +2,7 @@
 
 ## Team Members
 
-- En-Ping su
+- En-Ping Su
 - Wendi Zhong
 - Yiyang Wang
 
