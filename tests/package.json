@@ -1,0 +1,11 @@
+{
+  "name": "sast-tests",
+  "type": "module",
+  "scripts": {
+    "test:unit": "node --test unit/scanner.test.mjs",
+    "test:integration": "bash integration/pipeline.test.sh",
+    "test:load": "bash load/burst.test.sh",
+    "test:failure": "bash failure/failure.test.sh",
+    "test": "npm run test:unit && npm run test:integration && npm run test:load && npm run test:failure"
+  }
+}
