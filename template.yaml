@@ -64,6 +64,14 @@ Resources:
       MessageRetentionPeriod: 1209600  # 14 days
 
   # ============================================================
+  # SNS Topics - security notifications
+  # ============================================================
+  SastSecurityFindingsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: sast-security-findings
+
+  # ============================================================
   # DynamoDB Table - scan metadata for fast queries
   # ============================================================
   ScansTable:
@@ -140,7 +148,7 @@ Resources:
   WebhookHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Role: arn:aws:iam::030919480532:role/LabRole
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/LabRole'
       FunctionName: sast-webhook-handler
       CodeUri: src/webhook-handler/
       Handler: index.handler
@@ -170,7 +178,7 @@ Resources:
   ScannerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Role: arn:aws:iam::030919480532:role/LabRole
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/LabRole'
       FunctionName: sast-scanner
       PackageType: Image
       MemorySize: 1024
@@ -180,11 +188,17 @@ Resources:
       Environment:
         Variables:
           GITHUB_TOKEN: !Ref GitHubToken
+          SNS_SECURITY_FINDINGS_TOPIC_ARN: !Ref SastSecurityFindingsTopic
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ScansTable
         - S3CrudPolicy:
             BucketName: !Ref ReportsBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: !Ref SastSecurityFindingsTopic
       Events:
         SQSTrigger:
           Type: SQS
@@ -203,7 +217,7 @@ Resources:
   QueryApiFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Role: arn:aws:iam::030919480532:role/LabRole
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/LabRole'
       FunctionName: sast-query-api
       CodeUri: src/query-api/
       Handler: index.handler
@@ -239,6 +253,40 @@ Resources:
             ApiId: !Ref ScannerApi
             Path: /stats
             Method: GET
+
+  # ============================================================
+  # Lambda 4 - DLQ notifier
+  # Triggered when a scan job message reaches SQS DLQ.
+  # Publishes scan failure details to SNS.
+  # ============================================================
+  DLQNotifierFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/LabRole'
+      FunctionName: sast-dlq-notifier
+      CodeUri: src/dlq-notifier/
+      Handler: index.handler
+      MemorySize: 256
+      Timeout: 30
+      Environment:
+        Variables:
+          SNS_SECURITY_FINDINGS_TOPIC_ARN: !Ref SastSecurityFindingsTopic
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: !Ref SastSecurityFindingsTopic
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !GetAtt ScansTable.Arn
+      Events:
+        ScanJobDLQTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ScanJobDLQ.Arn
+            BatchSize: 1
 
 # ============================================================
 # Outputs
