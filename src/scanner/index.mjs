@@ -4,12 +4,38 @@ import path from 'path';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
 import { scanDirectory, scanCode } from './scanner.js';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 const s3 = new S3Client();
+const sns = new SNSClient();
 
-const { DYNAMODB_TABLE, S3_REPORTS_BUCKET, GITHUB_TOKEN } = process.env;
+const { DYNAMODB_TABLE, S3_REPORTS_BUCKET, GITHUB_TOKEN, SNS_SECURITY_FINDINGS_TOPIC_ARN } = process.env;
+
+async function postPullRequestComment({ repoFullName, prNumber, body }) {
+  const [owner, repo] = (repoFullName || '').split('/');
+  if (!owner || !repo) throw new Error(`Invalid repoFullName: ${repoFullName}`);
+  if (!prNumber) throw new Error('Missing prNumber');
+  if (!GITHUB_TOKEN) throw new Error('Missing GITHUB_TOKEN');
+
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`, {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/vnd.github+json',
+      'Authorization': `Bearer ${GITHUB_TOKEN}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'Content-Type': 'application/json',
+      'User-Agent': 'cs6620-sast-scanner',
+    },
+    body: JSON.stringify({ body }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`GitHub comment failed: ${res.status} ${res.statusText}${text ? ` - ${text}` : ''}`);
+  }
+}
 
 async function updateScanStatus(repoName, scanId, updates) {
   const expressionParts = [];
@@ -36,7 +62,7 @@ async function updateScanStatus(repoName, scanId, updates) {
 export const handler = async (event) => {
   for (const record of event.Records) {
     const job = JSON.parse(record.body);
-    const { scanId, repoFullName, cloneUrl, branch, commitSha } = job;
+    const { scanId, repoFullName, cloneUrl, branch, commitSha, prNumber } = job;
     const startTime = Date.now();
     const cloneDir = `/tmp/repo-${scanId}`;
 
@@ -111,6 +137,77 @@ export const handler = async (event) => {
         summary: report.summary,
       });
 
+      // Security alert: publish once when any HIGH severity findings exist.
+      // Requirement: topic-based notification, message includes repo/scanId and findings summary (no S3 link).
+      if (report.summary?.high > 0 && SNS_SECURITY_FINDINGS_TOPIC_ARN) {
+        const topHighFindings = allVulnerabilities
+          .filter(v => v.severity === 'HIGH')
+          .sort((a, b) => a.line - b.line)
+          .slice(0, 5)
+          .map(v => ({
+            id: v.id,
+            name: v.name,
+            file: v.file,
+            line: v.line,
+            evidence: v.evidence,
+            message: v.message,
+          }));
+
+        const messageText = [
+          `SAST HIGH findings`,
+          `repoName: ${repoFullName}`,
+          `scanId: ${scanId}`,
+          `severityCounts: high=${report.summary.high}, medium=${report.summary.medium}, low=${report.summary.low}`,
+          `totalVulnerabilities: ${report.summary.totalVulnerabilities}`,
+          `filesWithIssues: ${report.summary.filesWithIssues}`,
+          `topFindings (up to 5):`,
+          ...topHighFindings.map((f, idx) =>
+            `${idx + 1}. [${f.id}] ${f.name} @ ${f.file}:${f.line}\n   message: ${f.message}\n   evidence: ${f.evidence}`
+          ),
+        ].join('\n');
+
+        try {
+          await sns.send(new PublishCommand({
+            TopicArn: SNS_SECURITY_FINDINGS_TOPIC_ARN,
+            Subject: `SAST HIGH findings: ${repoFullName}`,
+            Message: messageText,
+          }));
+        } catch (publishErr) {
+          // Notification failure should not mark the scan as failed.
+          console.error('SNS publish failed (HIGH findings):', publishErr);
+        }
+      }
+
+      // Optional: PR comment write-back (only for pull_request-triggered scans).
+      // Requirement: short summary (severity counts + top findings). No email mapping.
+      if (prNumber && GITHUB_TOKEN) {
+        const topFindings = allVulnerabilities
+          .slice(0, 5)
+          .map(v => `- **${v.severity}** \`${v.id}\` ${v.file}:${v.line} — ${v.message}`);
+
+        const commentBody = [
+          `## SAST scan results`,
+          ``,
+          `**scanId:** \`${scanId}\``,
+          `**repo:** \`${repoFullName}\``,
+          `**severity counts:** HIGH=${report.summary.high}, MEDIUM=${report.summary.medium}, LOW=${report.summary.low} (total=${report.summary.totalVulnerabilities})`,
+          ``,
+          `### Top findings`,
+          ...(topFindings.length ? topFindings : ['- No findings.']),
+        ].join('\n');
+
+        try {
+          await postPullRequestComment({
+            repoFullName,
+            prNumber,
+            body: commentBody,
+          });
+        } catch (commentErr) {
+          // Do not fail the scan if GitHub commenting fails.
+          console.error('GitHub PR comment failed:', commentErr);
+        }
+      }
+
       console.log(`Scan ${scanId} completed: ${allVulnerabilities.length} vulnerabilities found in ${durationMs}ms`);
 
     } catch (error) {
@@ -121,6 +218,8 @@ export const handler = async (event) => {
         error: error.message,
         durationMs: Date.now() - startTime,
       });
+      // Re-throw so SQS retries and the message reaches the configured DLQ.
+      throw error;
     } finally {
       // Clean up cloned repo
       if (fs.existsSync(cloneDir)) {

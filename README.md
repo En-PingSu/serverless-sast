@@ -26,16 +26,6 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 Save this value, you'll need it for both AWS deployment and GitHub webhook configuration.
 
-### Find Your LabRole ARN
-
-Each team member has a different AWS account ID in Learner Lab. Get yours with:
-
-```bash
-aws sts get-caller-identity --query Account --output text
-```
-
-Your LabRole ARN will be: `arn:aws:iam::<your-account-id>:role/LabRole`
-
 ### Build
 
 ```bash
@@ -54,7 +44,6 @@ You will be prompted for:
 
 | Parameter             | Description                                      |
 |-----------------------|--------------------------------------------------|
-| `LabRoleArn`          | Your LabRole ARN (see above)                     |
 | `GitHubWebhookSecret` | The random secret you generated above            |
 | `GitHubToken`          | GitHub personal access token (optional, only for private repos) |
 
