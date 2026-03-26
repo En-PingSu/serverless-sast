@@ -13,6 +13,61 @@ const sns = new SNSClient();
 
 const { DYNAMODB_TABLE, S3_REPORTS_BUCKET, GITHUB_TOKEN, SNS_SECURITY_FINDINGS_TOPIC_ARN } = process.env;
 
+// GitHub issue/PR comment body max is 65536 UTF-8 chars; leave margin for header/footer.
+const GITHUB_COMMENT_MAX_CHARS = 62000;
+
+function sortFindingsForDisplay(vulns) {
+  const order = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+  return [...vulns].sort((a, b) => {
+    const sa = order[a.severity] ?? 3;
+    const sb = order[b.severity] ?? 3;
+    if (sa !== sb) return sa - sb;
+    const fa = a.file || '';
+    const fb = b.file || '';
+    if (fa !== fb) return fa.localeCompare(fb);
+    return (a.line || 0) - (b.line || 0);
+  });
+}
+
+function formatFindingBlock(v, index) {
+  const desc = v.description ? `\n  - detail: ${v.description}` : '';
+  const ev = v.evidence ? `\n  - evidence: \`${String(v.evidence).replace(/`/g, "'")}\`` : '';
+  return [
+    `#### ${index + 1}. \`${v.id}\` (${v.severity}) — ${v.name}`,
+    `- **File:** \`${v.file}:${v.line}\``,
+    `- **Message:** ${v.message}${desc}${ev}`,
+  ].join('\n');
+}
+
+function buildFullPrCommentBody({ scanId, repoFullName, report, allVulnerabilities }) {
+  const sorted = sortFindingsForDisplay(allVulnerabilities);
+  const header = [
+    `## SAST scan results`,
+    ``,
+    `**scanId:** \`${scanId}\``,
+    `**repo:** \`${repoFullName}\``,
+    `**branch:** \`${report.branch}\` · **commit:** \`${report.commitSha?.slice(0, 7) ?? ''}\``,
+    `**severity counts:** HIGH=${report.summary.high}, MEDIUM=${report.summary.medium}, LOW=${report.summary.low} (total=${report.summary.totalVulnerabilities})`,
+    ``,
+    `### All findings (${sorted.length})`,
+    ``,
+  ].join('\n');
+
+  let body = header;
+  let included = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    const block = formatFindingBlock(sorted[i], i) + '\n\n';
+    if (body.length + block.length > GITHUB_COMMENT_MAX_CHARS) {
+      const omitted = sorted.length - included;
+      body += `\n\n---\n*${omitted} more finding(s) omitted: GitHub comment size limit (~65k chars). Full JSON is in S3 report for this scan.*\n`;
+      break;
+    }
+    body += block;
+    included++;
+  }
+  return body;
+}
+
 async function postPullRequestComment({ repoFullName, prNumber, body }) {
   const [owner, repo] = (repoFullName || '').split('/');
   if (!owner || !repo) throw new Error(`Invalid repoFullName: ${repoFullName}`);
@@ -179,22 +234,14 @@ export const handler = async (event) => {
       }
 
       // Optional: PR comment write-back (only for pull_request-triggered scans).
-      // Requirement: short summary (severity counts + top findings). No email mapping.
+      // Lists all findings (sorted by severity, file, line); GitHub caps ~65k chars — we truncate with a note if needed.
       if (prNumber && GITHUB_TOKEN) {
-        const topFindings = allVulnerabilities
-          .slice(0, 5)
-          .map(v => `- **${v.severity}** \`${v.id}\` ${v.file}:${v.line} — ${v.message}`);
-
-        const commentBody = [
-          `## SAST scan results`,
-          ``,
-          `**scanId:** \`${scanId}\``,
-          `**repo:** \`${repoFullName}\``,
-          `**severity counts:** HIGH=${report.summary.high}, MEDIUM=${report.summary.medium}, LOW=${report.summary.low} (total=${report.summary.totalVulnerabilities})`,
-          ``,
-          `### Top findings`,
-          ...(topFindings.length ? topFindings : ['- No findings.']),
-        ].join('\n');
+        const commentBody = buildFullPrCommentBody({
+          scanId,
+          repoFullName,
+          report,
+          allVulnerabilities,
+        });
 
         try {
           await postPullRequestComment({
