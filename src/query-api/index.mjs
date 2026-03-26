@@ -114,7 +114,9 @@ async function getStats() {
 }
 
 export const handler = async (event) => {
-  const path = event.rawPath || event.requestContext?.http?.path || '';
+  const rawPath = event.rawPath || event.requestContext?.http?.path || '';
+  const stage = event.requestContext?.stage || '';
+  const path = stage && rawPath.startsWith(`/${stage}`) ? rawPath.slice(`/${stage}`.length) || '/' : rawPath;
   const method = event.requestContext?.http?.method || 'GET';
   const queryParams = event.queryStringParameters || {};
 
