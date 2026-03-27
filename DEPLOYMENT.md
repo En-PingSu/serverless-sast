@@ -40,6 +40,40 @@ When prompted, fill in the following:
 | Disable rollback | N |
 | Save arguments to samconfig.toml | Y |
 
+
+> **Known first-deploy issue (ECR)**
+>
+> We have seen this error on first deploy even when selecting **Create managed ECR repositories = Y**:
+> `Error: Unable to upload artifact scannerfunction:latest referenced by ImageUri parameter of ScannerFunction resource.`
+> `error from registry: The repository with name '.../scannerfunction...repo' does not exist in the registry ...`
+>
+> Root cause is still not fully confirmed (possibly SAM managed-ECR behavior in this environment, or Learner Lab IAM restrictions).  
+> If this happens, use the following recovery steps:
+>
+> 1. Copy the missing repository name exactly from the error message.
+> 2. Create that ECR repo manually (same region):
+>    ```bash
+>    aws ecr create-repository --region us-west-2 --repository-name "<name_from_error>"
+>    ```
+> 3. Confirm it exists:
+>    ```bash
+>    aws ecr describe-repositories --region us-west-2 --repository-names "<name_from_error>"
+>    ```
+> 4. Ensure `samconfig.toml` maps `ScannerFunction` to that exact repo URI in `image_repositories`.
+> 5. Re-run:
+>    ```bash
+>    sam build && sam deploy
+>    ```
+
+> **Important: `samconfig.toml` does not always keep token/secret values**
+>
+> After `sam deploy --guided`, verify `samconfig.toml` has `parameter_overrides` under `[default.deploy.parameters]`.
+> If missing, add it manually:
+> ```toml
+> parameter_overrides = "GitHubWebhookSecret=YOUR_WEBHOOK_SECRET GitHubToken=YOUR_GITHUB_PAT"
+> ```
+> Without this, a later `sam deploy` may fail with parameter errors (for example `Parameters: [GitHubWebhookSecret] must have values`) or run without token-dependent behavior.
+
 After the first deploy, `samconfig.toml` is generated locally. Subsequent deploys just need:
 
 ```bash
