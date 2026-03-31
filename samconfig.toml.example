@@ -1,0 +1,17 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "sast-scanner-stack"
+resolve_s3 = true
+s3_prefix = "sast-scanner-stack"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+# Keep this in sync with your ECR repo URI:
+#   aws ecr describe-repositories --region us-west-2 --repository-names sast-scanner-repo --query "repositories[0].repositoryUri" --output text
+image_repositories = ["ScannerFunction=123456789012.dkr.ecr.us-west-2.amazonaws.com/sast-scanner-repo"]
+# Must include both values; guided deploy does not always persist them reliably.
+parameter_overrides = "GitHubWebhookSecret=YOUR_WEBHOOK_SECRET GitHubToken=YOUR_GITHUB_PAT"
+disable_rollback = true
+
+[default.global.parameters]
+region = "us-west-2"
