@@ -5,13 +5,16 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
+import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import { scanDirectory, scanCode } from './scanner.js';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 const s3 = new S3Client();
 const sns = new SNSClient();
+const cw = new CloudWatchClient();
 
 const { DYNAMODB_TABLE, S3_REPORTS_BUCKET, GITHUB_TOKEN, SNS_SECURITY_FINDINGS_TOPIC_ARN } = process.env;
+const CW_NAMESPACE = 'SASTScanner';
 
 // GitHub issue/PR comment body max is 65536 UTF-8 chars; leave margin for header/footer.
 const GITHUB_COMMENT_MAX_CHARS = 62000;
@@ -89,6 +92,17 @@ async function postPullRequestComment({ repoFullName, prNumber, body }) {
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`GitHub comment failed: ${res.status} ${res.statusText}${text ? ` - ${text}` : ''}`);
+  }
+}
+
+async function emitMetrics(metricData) {
+  try {
+    await cw.send(new PutMetricDataCommand({
+      Namespace: CW_NAMESPACE,
+      MetricData: metricData,
+    }));
+  } catch (err) {
+    console.error('CloudWatch PutMetricData failed:', err);
   }
 }
 
@@ -192,6 +206,19 @@ export const handler = async (event) => {
         summary: report.summary,
       });
 
+      // Emit CloudWatch metrics for completed scan
+      const timestamp = new Date();
+      await emitMetrics([
+        { MetricName: 'ScanCompleted', Value: 1, Unit: 'Count', Timestamp: timestamp,
+          Dimensions: [{ Name: 'Repository', Value: repoFullName }] },
+        { MetricName: 'ScanDuration', Value: durationMs, Unit: 'Milliseconds', Timestamp: timestamp,
+          Dimensions: [{ Name: 'Repository', Value: repoFullName }] },
+        { MetricName: 'VulnerabilitiesFound', Value: allVulnerabilities.length, Unit: 'Count', Timestamp: timestamp,
+          Dimensions: [{ Name: 'Repository', Value: repoFullName }] },
+        { MetricName: 'HighSeverityFindings', Value: report.summary.high, Unit: 'Count', Timestamp: timestamp,
+          Dimensions: [{ Name: 'Repository', Value: repoFullName }] },
+      ]);
+
       // Security alert: publish once when any HIGH severity findings exist.
       // Requirement: topic-based notification, message includes repo/scanId and findings summary (no S3 link).
       if (report.summary?.high > 0 && SNS_SECURITY_FINDINGS_TOPIC_ARN) {
@@ -259,12 +286,20 @@ export const handler = async (event) => {
 
     } catch (error) {
       console.error(`Scan ${scanId} failed:`, error);
+      const failDuration = Date.now() - startTime;
       await updateScanStatus(repoFullName, scanId, {
         status: 'FAILED',
         completedAt: new Date().toISOString(),
         error: error.message,
-        durationMs: Date.now() - startTime,
+        durationMs: failDuration,
       });
+
+      // Emit CloudWatch failure metric
+      await emitMetrics([
+        { MetricName: 'ScanFailed', Value: 1, Unit: 'Count', Timestamp: new Date(),
+          Dimensions: [{ Name: 'Repository', Value: repoFullName }] },
+      ]);
+
       // Re-throw so SQS retries and the message reaches the configured DLQ.
       throw error;
     } finally {
