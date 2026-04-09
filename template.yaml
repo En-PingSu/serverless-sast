@@ -113,35 +113,6 @@ Resources:
                 TransitionInDays: 30
 
   # ============================================================
-  # S3 Bucket - static frontend dashboard
-  # ============================================================
-  FrontendBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub 'sast-dashboard-${AWS::AccountId}'
-      WebsiteConfiguration:
-        IndexDocument: index.html
-        ErrorDocument: index.html
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        BlockPublicPolicy: false
-        IgnorePublicAcls: false
-        RestrictPublicBuckets: false
-
-  FrontendBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref FrontendBucket
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: PublicReadGetObject
-            Effect: Allow
-            Principal: '*'
-            Action: s3:GetObject
-            Resource: !Sub '${FrontendBucket.Arn}/*'
-
-  # ============================================================
   # Lambda 1 - Webhook Handler
   # Receives GitHub webhooks, validates signature, enqueues scan job
   # ============================================================
@@ -288,6 +259,174 @@ Resources:
             Queue: !GetAtt ScanJobDLQ.Arn
             BatchSize: 1
 
+  # ============================================================
+  # CloudWatch Alarms
+  # ============================================================
+  ScanFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sast-scan-failure-rate
+      AlarmDescription: Fires when scan failures exceed 2 in 5 minutes
+      Namespace: SASTScanner
+      MetricName: ScanFailed
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 2
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SastSecurityFindingsTopic
+
+  DLQDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sast-dlq-depth
+      AlarmDescription: Fires when messages appear in the dead-letter queue
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ScanJobDLQ.QueueName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SastSecurityFindingsTopic
+
+  HighSeverityAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sast-high-severity-findings
+      AlarmDescription: Fires when HIGH severity vulnerabilities are detected
+      Namespace: SASTScanner
+      MetricName: HighSeverityFindings
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SastSecurityFindingsTopic
+
+  ScanDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sast-scan-duration-high
+      AlarmDescription: Fires when average scan duration exceeds 60 seconds
+      Namespace: SASTScanner
+      MetricName: ScanDuration
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 60000
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SastSecurityFindingsTopic
+
+  # ============================================================
+  # CloudWatch Ops Dashboard
+  # ============================================================
+  OpsDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: sast-scanner-ops
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0, "y": 0, "width": 12, "height": 6,
+              "properties": {
+                "title": "Scan Completion vs Failure",
+                "metrics": [
+                  ["SASTScanner", "ScanCompleted", { "stat": "Sum", "label": "Completed", "color": "#2ca02c" }],
+                  ["SASTScanner", "ScanFailed", { "stat": "Sum", "label": "Failed", "color": "#d62728" }]
+                ],
+                "period": 300,
+                "region": "${AWS::Region}",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 0, "width": 12, "height": 6,
+              "properties": {
+                "title": "Scan Duration (ms)",
+                "metrics": [
+                  ["SASTScanner", "ScanDuration", { "stat": "Average", "label": "Avg Duration" }],
+                  ["SASTScanner", "ScanDuration", { "stat": "Maximum", "label": "Max Duration", "color": "#ff7f0e" }]
+                ],
+                "period": 300,
+                "region": "${AWS::Region}",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "Vulnerabilities Found",
+                "metrics": [
+                  ["SASTScanner", "VulnerabilitiesFound", { "stat": "Sum", "label": "Total Vulns" }],
+                  ["SASTScanner", "HighSeverityFindings", { "stat": "Sum", "label": "HIGH", "color": "#d62728" }]
+                ],
+                "period": 300,
+                "region": "${AWS::Region}",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "SQS Queue Depth",
+                "metrics": [
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "sast-scan-jobs", { "label": "Main Queue" }],
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "sast-scan-jobs-dlq", { "label": "DLQ", "color": "#d62728" }]
+                ],
+                "period": 60,
+                "region": "${AWS::Region}",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 12, "width": 12, "height": 6,
+              "properties": {
+                "title": "Lambda Invocations",
+                "metrics": [
+                  ["AWS/Lambda", "Invocations", "FunctionName", "sast-scanner", { "label": "Scanner" }],
+                  ["AWS/Lambda", "Invocations", "FunctionName", "sast-webhook-handler", { "label": "Webhook Handler" }],
+                  ["AWS/Lambda", "Errors", "FunctionName", "sast-scanner", { "label": "Scanner Errors", "color": "#d62728" }]
+                ],
+                "period": 300,
+                "region": "${AWS::Region}",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 12, "width": 12, "height": 6,
+              "properties": {
+                "title": "Lambda Duration (ms)",
+                "metrics": [
+                  ["AWS/Lambda", "Duration", "FunctionName", "sast-scanner", { "stat": "Average", "label": "Scanner Avg" }],
+                  ["AWS/Lambda", "Duration", "FunctionName", "sast-scanner", { "stat": "Maximum", "label": "Scanner Max", "color": "#ff7f0e" }]
+                ],
+                "period": 300,
+                "region": "${AWS::Region}",
+                "view": "timeSeries"
+              }
+            }
+          ]
+        }
+
 # ============================================================
 # Outputs
 # ============================================================
@@ -300,10 +439,6 @@ Outputs:
     Description: URL to configure as GitHub webhook
     Value: !Sub 'https://${ScannerApi}.execute-api.${AWS::Region}.amazonaws.com/prod/webhook'
 
-  DashboardUrl:
-    Description: Frontend dashboard URL
-    Value: !GetAtt FrontendBucket.WebsiteURL
-
   ReportsBucket:
     Description: S3 bucket for scan reports
     Value: !Ref ReportsBucket
@@ -311,3 +446,7 @@ Outputs:
   ScansTable:
     Description: DynamoDB table for scan metadata
     Value: !Ref ScansTable
+
+  OpsDashboardUrl:
+    Description: CloudWatch ops dashboard
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=sast-scanner-ops'

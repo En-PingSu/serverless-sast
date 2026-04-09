@@ -6,6 +6,33 @@
 - Wendi Zhong
 - Yiyang Wang
 
+## Architecture
+
+```
+GitHub PR/Push → API Gateway → Webhook Handler Lambda → SQS Queue → Scanner Lambda (container)
+                                                                          │
+                                          ┌───────────────────────────────-┤
+                                          │              │                │
+                                          ▼              ▼                ▼
+                                      DynamoDB          S3           GitHub PR
+                                     (metadata)     (reports)       Comment
+                                                                   (findings)
+                                          │
+                                          ▼
+                               SQS DLQ → DLQ Notifier → SNS Alert
+```
+
+**Feedback loop**: Scan results are posted directly as PR comments on GitHub — developers
+get feedback where they already work, not on a separate dashboard.
+
+**Failure path**: Failed scans retry 3x via SQS, then land in the DLQ. The DLQ notifier
+Lambda sends an SNS alert with failure details.
+
+**Observability**: CloudWatch custom metrics (`ScanCompleted`, `ScanFailed`, `ScanDuration`,
+`VulnerabilitiesFound`, `HighSeverityFindings`) + alarms + ops dashboard.
+
+**AWS Services (7)**: Lambda, SQS, DynamoDB, S3, API Gateway, CloudWatch, SNS
+
 ## Deployment
 
 ### Prerequisites
@@ -26,18 +53,12 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 Save this value, you'll need it for both AWS deployment and GitHub webhook configuration.
 
-### Build
+### Build & Deploy
 
 ```bash
 sam build
-```
-
-### Deploy
-
-For your first deployment, use guided mode:
-
-```bash
-sam deploy --guided
+sam deploy --guided   # first time (prompts for parameters)
+sam deploy            # subsequent deployments
 ```
 
 You will be prompted for:
@@ -46,12 +67,6 @@ You will be prompted for:
 |-----------------------|--------------------------------------------------|
 | `GitHubWebhookSecret` | The random secret you generated above            |
 | `GitHubToken`          | GitHub personal access token (optional, only for private repos) |
-
-For subsequent deployments:
-
-```bash
-sam deploy
-```
 
 ### Retrieve Stack Outputs
 
@@ -63,63 +78,59 @@ sam list stack-outputs --stack-name <your-stack-name>
 
 Key outputs:
 
-| Output          | Description                          |
-|-----------------|--------------------------------------|
-| `ApiUrl`        | Base URL for the query API           |
-| `WebhookUrl`    | URL to configure in GitHub webhooks  |
-| `DashboardUrl`  | Frontend dashboard URL               |
-| `ReportsBucket` | S3 bucket storing scan reports       |
-| `ScansTable`    | DynamoDB table for scan metadata     |
+| Output             | Description                          |
+|--------------------|--------------------------------------|
+| `ApiUrl`           | Base URL for the query API           |
+| `WebhookUrl`       | URL to configure in GitHub webhooks  |
+| `ReportsBucket`    | S3 bucket storing scan reports       |
+| `ScansTable`       | DynamoDB table for scan metadata     |
+| `OpsDashboardUrl`  | CloudWatch ops dashboard             |
 
----
+### Teardown
 
-### Cleanup
+All infrastructure is defined in `template.yaml` (SAM/CloudFormation). Full cleanup:
 
 ```bash
 sam delete
 ```
 
-## Testing the SAST Scanner Pipeline
+---
 
-### Step 1 — Get Your API URL
+## Testing
 
-```bash
-sam list stack-outputs --stack-name sast-scanner
-```
-
-Copy the `WebhookUrl` from the output.
-
-### Step 2 — Configure the GitHub Webhook
+### Configure the GitHub Webhook
 
 1. Go to your GitHub repo → **Settings → Webhooks → Add webhook**
-2. **Payload URL**: paste the `WebhookUrl`
+2. **Payload URL**: paste the `WebhookUrl` from stack outputs
 3. **Content type**: `application/json`
 4. **Secret**: the same `GitHubWebhookSecret` you used during deployment
-5. **Events**: select "Just the push event" (or "Pushes" and "Pull requests")
+5. **Events**: select "Pushes" and "Pull requests"
 6. Click **Add webhook**
 
-### Step 3 — Trigger a Test Push
-
-Make any small change in the repo and push it:
+### Test Scripts
 
 ```bash
-git commit --allow-empty -m "test scan trigger"
-git push
+# Unit tests (scanner logic with known-vulnerable code)
+node --test tests/unit/scanner.test.mjs
+
+# Integration test (webhook → full pipeline → DynamoDB + S3)
+bash tests/integration/pipeline.test.sh
+
+# Failure test (bad repo → SQS retries → DLQ → SNS alert)
+bash tests/failure/failure.test.sh
+
+# Load/burst test (N concurrent webhooks)
+bash tests/load/burst.test.sh
 ```
 
-### Step 4 — Verify the Pipeline (Optional)
-
-Check each stage to confirm it worked:
+### Verify the Pipeline
 
 ```bash
-# Check webhook handler logs (--follow streams live, or use --since 5m to fetch recent logs and exit)
-aws logs tail /aws/lambda/sast-webhook-handler --follow
+# Check webhook handler logs
+aws logs tail /aws/lambda/sast-webhook-handler --since 5m
 
 # Check scanner logs
-aws logs tail /aws/lambda/sast-scanner --follow
-
-# Check SQS queue (should be 0 if message was processed)
-aws sqs get-queue-attributes --queue-url <SQS_QUEUE_URL> --attribute-names ApproximateNumberOfMessages
+aws logs tail /aws/lambda/sast-scanner --since 5m
 
 # Check DynamoDB for scan results
 aws dynamodb scan --table-name sast-scans
@@ -127,3 +138,8 @@ aws dynamodb scan --table-name sast-scans
 # Check the API endpoint
 curl <ApiUrl>/scans
 ```
+
+### Note: Lambda Concurrency
+
+AWS Learner Labs may limit the number of concurrent Lambda functions.
+Keep this in mind when running burst/load tests with many simultaneous PRs.
