@@ -11,7 +11,7 @@
 ```
 GitHub PR/Push → API Gateway → Webhook Handler Lambda → SQS Queue → Scanner Lambda (container)
                                                                           │
-                                          ┌───────────────────────────────-┤
+                                          ┌───────────────────────────────┤
                                           │              │                │
                                           ▼              ▼                ▼
                                       DynamoDB          S3           GitHub PR
@@ -143,3 +143,8 @@ curl <ApiUrl>/scans
 
 AWS Learner Labs may limit the number of concurrent Lambda functions.
 Keep this in mind when running burst/load tests with many simultaneous PRs.
+
+### Milestone 2 - Yiyang
+
+`load_test.py` triggers the webhook → Lambda pipeline by copying files from source folder into the test repo one `.py` file at a time. Each file gets its own branch, commit, and push, firing a separate webhook invocation per file.
+
