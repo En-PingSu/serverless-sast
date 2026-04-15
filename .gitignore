@@ -4,4 +4,6 @@ node_modules/
 samconfig.toml
 *.env
 PLAN.md
+TODO.md
+scripts/
 test-webhook.sh

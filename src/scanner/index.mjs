@@ -207,17 +207,20 @@ export const handler = async (event) => {
       });
 
       // Emit CloudWatch metrics for completed scan
+      // Emit both with and without dimensions — dashboard widgets query dimension-less metrics,
+      // while per-repo dimensions allow filtering by repository.
       const timestamp = new Date();
-      await emitMetrics([
-        { MetricName: 'ScanCompleted', Value: 1, Unit: 'Count', Timestamp: timestamp,
-          Dimensions: [{ Name: 'Repository', Value: repoFullName }] },
-        { MetricName: 'ScanDuration', Value: durationMs, Unit: 'Milliseconds', Timestamp: timestamp,
-          Dimensions: [{ Name: 'Repository', Value: repoFullName }] },
-        { MetricName: 'VulnerabilitiesFound', Value: allVulnerabilities.length, Unit: 'Count', Timestamp: timestamp,
-          Dimensions: [{ Name: 'Repository', Value: repoFullName }] },
-        { MetricName: 'HighSeverityFindings', Value: report.summary.high, Unit: 'Count', Timestamp: timestamp,
-          Dimensions: [{ Name: 'Repository', Value: repoFullName }] },
-      ]);
+      const metricsBase = [
+        { MetricName: 'ScanCompleted', Value: 1, Unit: 'Count', Timestamp: timestamp },
+        { MetricName: 'ScanDuration', Value: durationMs, Unit: 'Milliseconds', Timestamp: timestamp },
+        { MetricName: 'VulnerabilitiesFound', Value: allVulnerabilities.length, Unit: 'Count', Timestamp: timestamp },
+        { MetricName: 'HighSeverityFindings', Value: report.summary.high, Unit: 'Count', Timestamp: timestamp },
+      ];
+      const metricsWithDims = metricsBase.map(m => ({
+        ...m,
+        Dimensions: [{ Name: 'Repository', Value: repoFullName }],
+      }));
+      await emitMetrics([...metricsBase, ...metricsWithDims]);
 
       // Security alert: publish once when any HIGH severity findings exist.
       // Requirement: topic-based notification, message includes repo/scanId and findings summary (no S3 link).
@@ -294,9 +297,11 @@ export const handler = async (event) => {
         durationMs: failDuration,
       });
 
-      // Emit CloudWatch failure metric
+      // Emit CloudWatch failure metric (with and without dimensions)
+      const failTimestamp = new Date();
       await emitMetrics([
-        { MetricName: 'ScanFailed', Value: 1, Unit: 'Count', Timestamp: new Date(),
+        { MetricName: 'ScanFailed', Value: 1, Unit: 'Count', Timestamp: failTimestamp },
+        { MetricName: 'ScanFailed', Value: 1, Unit: 'Count', Timestamp: failTimestamp,
           Dimensions: [{ Name: 'Repository', Value: repoFullName }] },
       ]);
 
