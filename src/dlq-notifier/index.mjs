@@ -54,16 +54,11 @@ export const handler = async (event) => {
       `error: ${errorMessage}`,
     ].join('\n');
 
-    try {
-      await sns.send(new PublishCommand({
-        TopicArn: SNS_SECURITY_FINDINGS_TOPIC_ARN,
-        Subject: `SAST scan failed: ${repoFullName}`,
-        Message: messageText,
-      }));
-    } catch (publishErr) {
-      // Avoid re-processing the same DLQ message if SNS publishing fails.
-      console.error('SNS publish failed (DLQ notifier):', publishErr);
-    }
+    await sns.send(new PublishCommand({
+      TopicArn: SNS_SECURITY_FINDINGS_TOPIC_ARN,
+      Subject: `SAST scan failed: ${repoFullName}`,
+      Message: messageText,
+    }));
   }
 };
 
