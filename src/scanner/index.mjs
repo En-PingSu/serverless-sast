@@ -1,4 +1,3 @@
-import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -7,6 +6,7 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
 import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import { scanDirectory, scanCode } from './scanner.js';
+import { cloneRepo, redactSecrets } from './git-clone.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 const s3 = new S3Client();
@@ -143,15 +143,8 @@ export const handler = async (event) => {
       });
 
       // Clone the repository (shallow clone for speed)
-      const authUrl = GITHUB_TOKEN
-        ? cloneUrl.replace('https://', `https://x-access-token:${GITHUB_TOKEN}@`)
-        : cloneUrl;
-
-      console.log(`Cloning ${repoFullName}@${branch} (${commitSha.slice(0, 7)})...`);
-      execSync(
-        `git clone --depth 1 --branch ${branch} "${authUrl}" "${cloneDir}"`,
-        { timeout: 60000, stdio: 'pipe' }
-      );
+      console.log(`Cloning ${repoFullName}@${JSON.stringify(branch)} (${commitSha.slice(0, 7)})...`);
+      cloneRepo({ cloneUrl, branch, cloneDir, token: GITHUB_TOKEN });
 
       // Run SAST scan on the cloned repo
       console.log(`Scanning ${cloneDir}...`);
@@ -288,12 +281,13 @@ export const handler = async (event) => {
       console.log(`Scan ${scanId} completed: ${allVulnerabilities.length} vulnerabilities found in ${durationMs}ms`);
 
     } catch (error) {
-      console.error(`Scan ${scanId} failed:`, error);
+      const safeMessage = redactSecrets(error.message, GITHUB_TOKEN);
+      console.error(`Scan ${scanId} failed: ${safeMessage}`);
       const failDuration = Date.now() - startTime;
       await updateScanStatus(repoFullName, scanId, {
         status: 'FAILED',
         completedAt: new Date().toISOString(),
-        error: error.message,
+        error: safeMessage,
         durationMs: failDuration,
       });
 
@@ -306,7 +300,7 @@ export const handler = async (event) => {
       ]);
 
       // Re-throw so SQS retries and the message reaches the configured DLQ.
-      throw error;
+      throw new Error(safeMessage);
     } finally {
       // Clean up cloned repo
       if (fs.existsSync(cloneDir)) {
