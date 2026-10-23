@@ -4,6 +4,8 @@ set -euo pipefail
 DEFAULT_URL=$(aws cloudformation describe-stacks --stack-name sast-scanner --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text 2>/dev/null)
 API_URL="${API_URL:-${DEFAULT_URL:-https://eudvkuuq93.execute-api.us-east-1.amazonaws.com/prod}}"
 SECRET="${WEBHOOK_SECRET:-test123}"
+QUERY_API_TOKEN="${QUERY_API_TOKEN:?set QUERY_API_TOKEN to the QueryApiToken stack parameter}"
+AUTH="Authorization: Bearer $QUERY_API_TOKEN"
 
 echo "=== Integration Test: Full Pipeline ==="
 echo "API: $API_URL"
@@ -39,7 +41,7 @@ STATUS="QUEUED"
 POLL_START=$(date +%s)
 for i in $(seq 1 24); do
   sleep 5
-  SCAN_DATA=$(curl -s "$API_URL/scans/$SCAN_ID")
+  SCAN_DATA=$(curl -s -H "$AUTH" "$API_URL/scans/$SCAN_ID")
   STATUS=$(echo "$SCAN_DATA" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','UNKNOWN'))" 2>/dev/null)
   echo "  [$((i * 5))s] Status: $STATUS"
   if [ "$STATUS" = "COMPLETED" ] || [ "$STATUS" = "FAILED" ]; then
@@ -60,7 +62,7 @@ else
 fi
 
 # Step 4: Verify scan result data
-SCAN_DATA=$(curl -s "$API_URL/scans/$SCAN_ID")
+SCAN_DATA=$(curl -s -H "$AUTH" "$API_URL/scans/$SCAN_ID")
 TOTAL=$(echo "$SCAN_DATA" | python3 -c "import sys,json; print(json.load(sys.stdin).get('summary',{}).get('totalVulnerabilities',0))" 2>/dev/null)
 HIGH=$(echo "$SCAN_DATA" | python3 -c "import sys,json; print(json.load(sys.stdin).get('summary',{}).get('high',0))" 2>/dev/null)
 MEDIUM=$(echo "$SCAN_DATA" | python3 -c "import sys,json; print(json.load(sys.stdin).get('summary',{}).get('medium',0))" 2>/dev/null)
@@ -93,7 +95,7 @@ fi
 echo ""
 echo "Step 4: Verifying API endpoints..."
 
-REPORT_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/scans/$SCAN_ID/report")
+REPORT_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH" "$API_URL/scans/$SCAN_ID/report")
 if [ "$REPORT_CODE" = "200" ]; then
   echo "PASS: GET /scans/{scanId}/report → 200"
   PASS=$((PASS + 1))
@@ -102,7 +104,7 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-STATS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/stats")
+STATS_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH" "$API_URL/stats")
 if [ "$STATS_CODE" = "200" ]; then
   echo "PASS: GET /stats → 200"
   PASS=$((PASS + 1))
@@ -111,7 +113,7 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-SCANS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/scans")
+SCANS_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH" "$API_URL/scans")
 if [ "$SCANS_CODE" = "200" ]; then
   echo "PASS: GET /scans → 200"
   PASS=$((PASS + 1))

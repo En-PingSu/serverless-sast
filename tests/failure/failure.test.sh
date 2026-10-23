@@ -4,6 +4,8 @@ set -euo pipefail
 DEFAULT_URL=$(aws cloudformation describe-stacks --stack-name sast-scanner --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text 2>/dev/null)
 API_URL="${API_URL:-${DEFAULT_URL:-https://eudvkuuq93.execute-api.us-east-1.amazonaws.com/prod}}"
 SECRET="${WEBHOOK_SECRET:-test123}"
+QUERY_API_TOKEN="${QUERY_API_TOKEN:?set QUERY_API_TOKEN to the QueryApiToken stack parameter}"
+AUTH="Authorization: Bearer $QUERY_API_TOKEN"
 PASS=0
 FAIL=0
 
@@ -99,7 +101,7 @@ else
   BAD_STATUS="UNKNOWN"
   for i in $(seq 1 18); do
     sleep 5
-    BAD_STATUS=$(curl -s "$API_URL/scans/$BAD_SCAN_ID" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','UNKNOWN'))" 2>/dev/null)
+    BAD_STATUS=$(curl -s -H "$AUTH" "$API_URL/scans/$BAD_SCAN_ID" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','UNKNOWN'))" 2>/dev/null)
     echo "    [$((i * 5))s] Status: $BAD_STATUS"
     if [ "$BAD_STATUS" = "FAILED" ]; then
       break
@@ -107,7 +109,7 @@ else
   done
 
   if [ "$BAD_STATUS" = "FAILED" ]; then
-    BAD_ERROR=$(curl -s "$API_URL/scans/$BAD_SCAN_ID" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','none')[:100])" 2>/dev/null)
+    BAD_ERROR=$(curl -s -H "$AUTH" "$API_URL/scans/$BAD_SCAN_ID" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','none')[:100])" 2>/dev/null)
     echo "  PASS: Scan status is FAILED"
     echo "  Error: $BAD_ERROR"
     PASS=$((PASS + 1))
