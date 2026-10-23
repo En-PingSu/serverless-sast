@@ -12,6 +12,11 @@ Parameters:
     NoEcho: true
     Default: ''
     Description: GitHub personal access token for cloning private repos (optional)
+  QueryApiToken:
+    Type: String
+    NoEcho: true
+    MinLength: 16
+    Description: Bearer token required by the query API (/scans, /stats); at least 16 characters
 
 Globals:
   Function:
@@ -40,6 +45,7 @@ Resources:
           - POST
           - OPTIONS
         AllowHeaders:
+          - Authorization
           - Content-Type
           - X-Hub-Signature-256
           - X-GitHub-Event
@@ -194,6 +200,9 @@ Resources:
       Handler: index.handler
       MemorySize: 256
       Timeout: 30
+      Environment:
+        Variables:
+          QUERY_API_TOKEN: !Ref QueryApiToken
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref ScansTable

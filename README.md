@@ -67,6 +67,7 @@ You will be prompted for:
 |-----------------------|--------------------------------------------------|
 | `GitHubWebhookSecret` | The random secret you generated above            |
 | `GitHubToken`          | GitHub personal access token (optional, only for private repos) |
+| `QueryApiToken`        | Bearer token for the query API (`/scans`, `/stats`); at least 16 characters, e.g. `openssl rand -hex 32` |
 
 ### Retrieve Stack Outputs
 
@@ -135,8 +136,8 @@ aws logs tail /aws/lambda/sast-scanner --since 5m
 # Check DynamoDB for scan results
 aws dynamodb scan --table-name sast-scans
 
-# Check the API endpoint
-curl <ApiUrl>/scans
+# Check the API endpoint (the query API requires the QueryApiToken)
+curl -H "Authorization: Bearer $QUERY_API_TOKEN" <ApiUrl>/scans
 ```
 
 ### Note: Lambda Concurrency
