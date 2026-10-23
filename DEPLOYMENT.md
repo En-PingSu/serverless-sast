@@ -44,7 +44,7 @@ Root cause is not fully confirmed yet (possibly SAM managed-ECR behavior in this
 
 3. Copy `samconfig.toml.example` to `samconfig.toml` and fill values:
    - `image_repositories` must map `ScannerFunction` to your ECR URI.
-   - `parameter_overrides` must include both `GitHubWebhookSecret` and `GitHubToken`.
+   - `parameter_overrides` must include `GitHubWebhookSecret`, `GitHubToken` and `QueryApiToken` (generate one with `openssl rand -hex 32`).
    - Do **not** enable `resolve_image_repos` when `image_repositories` is set.
 
 4. Deploy:

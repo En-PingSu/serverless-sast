@@ -146,30 +146,61 @@ const vulnerabilityRules = [
   }
 ];
 
-// Get line number from character index
-const getLineNumber = (code, index) => {
-  return code.substring(0, index).split('\n').length;
+// Repositories come from PR authors, so a scan's cost must not scale with
+// whatever they push. Files over maxFileBytes are skipped, a scan stops after
+// maxFiles files or maxTotalBytes of source, and each file reports at most
+// maxFindingsPerFile findings.
+export const SCAN_LIMITS = {
+  maxFileBytes: 1024 * 1024,
+  maxFiles: 5000,
+  maxTotalBytes: 50 * 1024 * 1024,
+  maxFindingsPerFile: 500,
+};
+
+// Offsets where each line starts, computed once per file.
+const lineStarts = (code) => {
+  const starts = [0];
+  for (let i = code.indexOf('\n'); i !== -1; i = code.indexOf('\n', i + 1)) {
+    starts.push(i + 1);
+  }
+  return starts;
+};
+
+// 1-based line number for a character index (binary search over lineStarts).
+const getLineNumber = (starts, index) => {
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (starts[mid] <= index) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo + 1;
 };
 
 // Get the actual line content
-const getLineContent = (code, lineNumber) => {
-  const lines = code.split('\n');
-  return lines[lineNumber - 1]?.trim() || '';
+const getLineContent = (code, starts, lineNumber) => {
+  const start = starts[lineNumber - 1];
+  const end = lineNumber < starts.length ? starts[lineNumber] - 1 : code.length;
+  return code.slice(start, end).trim();
 };
 
 // Scan code string for vulnerabilities
 export const scanCode = (code, filename = 'untitled.js') => {
   const vulnerabilities = [];
+  const starts = lineStarts(code);
 
-  for (const rule of vulnerabilityRules) {
+  scan: for (const rule of vulnerabilityRules) {
     for (const pattern of rule.patterns) {
       let match;
       const regex = new RegExp(pattern.regex.source, pattern.regex.flags);
-      
+
       while ((match = regex.exec(code)) !== null) {
-        const lineNumber = getLineNumber(code, match.index);
-        const lineContent = getLineContent(code, lineNumber);
-        
+        if (match[0] === '') regex.lastIndex++; // never loop on an empty match
+        if (vulnerabilities.length >= SCAN_LIMITS.maxFindingsPerFile) break scan;
+        const lineNumber = getLineNumber(starts, match.index);
+        const lineContent = getLineContent(code, starts, lineNumber);
+
         vulnerabilities.push({
           id: rule.id,
           name: rule.name,
@@ -214,11 +245,15 @@ export const scanDirectory = (dirpath, extensions = ['.js', '.mjs', '.cjs', '.ts
   }
 
   const results = {};
+  let filesScanned = 0;
+  let bytesScanned = 0;
+  let stopped = false;
 
   const scanDir = (currentPath) => {
     const entries = fs.readdirSync(currentPath, { withFileTypes: true });
 
     for (const entry of entries) {
+      if (stopped) return;
       const fullPath = path.join(currentPath, entry.name);
 
       // Skip node_modules and hidden directories
@@ -230,6 +265,18 @@ export const scanDirectory = (dirpath, extensions = ['.js', '.mjs', '.cjs', '.ts
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
         if (extensions.includes(ext)) {
+          const size = fs.statSync(fullPath).size;
+          if (size > SCAN_LIMITS.maxFileBytes) {
+            console.warn(`Skipping ${fullPath}: ${size} bytes exceeds the per-file limit`);
+            continue;
+          }
+          if (filesScanned >= SCAN_LIMITS.maxFiles || bytesScanned + size > SCAN_LIMITS.maxTotalBytes) {
+            console.warn(`Scan limit reached after ${filesScanned} files (${bytesScanned} bytes); remaining files skipped`);
+            stopped = true;
+            return;
+          }
+          filesScanned++;
+          bytesScanned += size;
           const vulnerabilities = scanFile(fullPath);
           if (vulnerabilities.length > 0) {
             results[fullPath] = vulnerabilities;
