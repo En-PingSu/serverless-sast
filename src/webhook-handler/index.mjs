@@ -9,7 +9,7 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 const { SQS_QUEUE_URL, DYNAMODB_TABLE, GITHUB_WEBHOOK_SECRET } = process.env;
 
 function verifySignature(payload, signature) {
-  if (!GITHUB_WEBHOOK_SECRET) return true; // skip if no secret configured
+  if (!GITHUB_WEBHOOK_SECRET) return false; // fail closed: never accept unsigned webhooks
   if (!signature) return false;
   const expected = 'sha256=' + crypto
     .createHmac('sha256', GITHUB_WEBHOOK_SECRET)
