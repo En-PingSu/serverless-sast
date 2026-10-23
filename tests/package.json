@@ -2,7 +2,7 @@
   "name": "sast-tests",
   "type": "module",
   "scripts": {
-    "test:unit": "node --test unit/scanner.test.mjs",
+    "test:unit": "node --test unit/scanner.test.mjs unit/git-clone.test.mjs",
     "test:integration": "bash integration/pipeline.test.sh",
     "test:load": "bash load/burst.test.sh",
     "test:failure": "bash failure/failure.test.sh",
