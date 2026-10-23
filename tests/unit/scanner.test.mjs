@@ -223,3 +223,41 @@ describe('edge cases (known scanner behavior)', () => {
     );
   });
 });
+
+// ============================================================
+// Scan cost limits
+// ============================================================
+
+import fs from 'fs';
+import os from 'os';
+import { SCAN_LIMITS } from '../../src/scanner/scanner.js';
+
+describe('scan cost limits', () => {
+  it('scans a file with many matches in linear time', () => {
+    const code = 'const x = "DES";\n'.repeat(60000); // ~1 MB minus a little, 60k matches
+    const started = Date.now();
+    const results = scanCode(code.slice(0, SCAN_LIMITS.maxFileBytes - 1), 'big.js');
+    assert.ok(Date.now() - started < 3000, `took ${Date.now() - started}ms`);
+    assert.equal(results.length, SCAN_LIMITS.maxFindingsPerFile);
+  });
+
+  it('still reports correct line numbers and evidence', () => {
+    const results = scanCode('line one\nline two\nconst h = crypto.createHash("md5");\n', 'a.js');
+    const md5 = results.find(r => r.id === 'WEAK_CRYPTO');
+    assert.equal(md5.line, 3);
+    assert.equal(md5.evidence, 'const h = crypto.createHash("md5");');
+  });
+
+  it('skips files over the size limit in a directory scan', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sast-limits-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'small.js'), 'const h = crypto.createHash("md5");\n');
+      fs.writeFileSync(path.join(dir, 'huge.js'), 'eval(req.body);\n' + ' '.repeat(SCAN_LIMITS.maxFileBytes));
+      const results = scanDirectory(dir);
+      const files = Object.keys(results).map(f => path.basename(f));
+      assert.deepEqual(files, ['small.js']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

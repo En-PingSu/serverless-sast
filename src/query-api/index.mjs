@@ -2,11 +2,12 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { isAuthorized } from './auth.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 const s3 = new S3Client();
 
-const { DYNAMODB_TABLE, S3_REPORTS_BUCKET } = process.env;
+const { DYNAMODB_TABLE, S3_REPORTS_BUCKET, QUERY_API_TOKEN } = process.env;
 
 // Route handler: GET /scans
 async function listScans(queryParams) {
@@ -120,6 +121,10 @@ export const handler = async (event) => {
   const method = event.requestContext?.http?.method || 'GET';
   const queryParams = event.queryStringParameters || {};
 
+  if (!isAuthorized(event.headers, QUERY_API_TOKEN)) {
+    return respond(401, { error: 'Unauthorized' });
+  }
+
   try {
     // Route: GET /stats
     if (path === '/stats') {
@@ -153,7 +158,7 @@ export const handler = async (event) => {
 
   } catch (error) {
     console.error('Query API error:', error);
-    return respond(500, { error: 'Internal server error', message: error.message });
+    return respond(500, { error: 'Internal server error' });
   }
 };
 

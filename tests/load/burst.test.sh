@@ -4,6 +4,8 @@ set -euo pipefail
 DEFAULT_URL=$(aws cloudformation describe-stacks --stack-name sast-scanner --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text 2>/dev/null)
 API_URL="${API_URL:-${DEFAULT_URL:-https://eudvkuuq93.execute-api.us-east-1.amazonaws.com/prod}}"
 SECRET="${WEBHOOK_SECRET:-test123}"
+QUERY_API_TOKEN="${QUERY_API_TOKEN:?set QUERY_API_TOKEN to the QueryApiToken stack parameter}"
+AUTH="Authorization: Bearer $QUERY_API_TOKEN"
 CONCURRENCY="${1:-5}"
 MAX_WAIT="${2:-180}"   # max seconds to wait for all scans to complete
 TMPDIR=$(mktemp -d)
@@ -62,7 +64,7 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
   PENDING=0
 
   for SID in "${SCAN_IDS[@]}"; do
-    S=$(curl -s "$API_URL/scans/$SID" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','UNKNOWN'))" 2>/dev/null)
+    S=$(curl -s -H "$AUTH" "$API_URL/scans/$SID" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','UNKNOWN'))" 2>/dev/null)
     case "$S" in
       COMPLETED) COMPLETED=$((COMPLETED + 1)) ;;
       FAILED)    FAILED=$((FAILED + 1)) ;;
@@ -85,7 +87,7 @@ TOTAL_VULNS=0
 SCAN_DETAILS=""
 
 for SID in "${SCAN_IDS[@]}"; do
-  DATA=$(curl -s "$API_URL/scans/$SID")
+  DATA=$(curl -s -H "$AUTH" "$API_URL/scans/$SID")
   S=$(echo "$DATA" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','UNKNOWN'))" 2>/dev/null)
   D=$(echo "$DATA" | python3 -c "import sys,json; print(json.load(sys.stdin).get('durationMs',0))" 2>/dev/null)
   V=$(echo "$DATA" | python3 -c "import sys,json; print(json.load(sys.stdin).get('summary',{}).get('totalVulnerabilities',0))" 2>/dev/null)
