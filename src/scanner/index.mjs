@@ -32,12 +32,18 @@ function sortFindingsForDisplay(vulns) {
   });
 }
 
+// Paths and evidence come from the scanned repository. Git paths may contain
+// backticks and newlines, which would break out of the code span below.
+function safeInline(value, max = 300) {
+  return String(value ?? '').replace(/[`\r\n]/g, '_').slice(0, max);
+}
+
 function formatFindingBlock(v, index) {
   const desc = v.description ? `\n  - detail: ${v.description}` : '';
   const ev = v.evidence ? `\n  - evidence: \`${String(v.evidence).replace(/`/g, "'")}\`` : '';
   return [
     `#### ${index + 1}. \`${v.id}\` (${v.severity}) — ${v.name}`,
-    `- **File:** \`${v.file}:${v.line}\``,
+    `- **File:** \`${safeInline(v.file)}:${v.line}\``,
     `- **Message:** ${v.message}${desc}${ev}`,
   ].join('\n');
 }
@@ -240,7 +246,7 @@ export const handler = async (event) => {
           `filesWithIssues: ${report.summary.filesWithIssues}`,
           `topFindings (up to 5):`,
           ...topHighFindings.map((f, idx) =>
-            `${idx + 1}. [${f.id}] ${f.name} @ ${f.file}:${f.line}\n   message: ${f.message}\n   evidence: ${f.evidence}`
+            `${idx + 1}. [${f.id}] ${f.name} @ ${safeInline(f.file)}:${f.line}\n   message: ${f.message}\n   evidence: ${safeInline(f.evidence)}`
           ),
         ].join('\n');
 

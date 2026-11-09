@@ -21,6 +21,12 @@ function verifySignature(payload, signature) {
   return crypto.timingSafeEqual(sigBuf, expBuf);
 }
 
+// Values below end up in a git clone, DynamoDB keys and GitHub API paths, so
+// accept only what GitHub itself would send for a github.com repository.
+const CLONE_URL_RE = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(?:\.git)?$/;
+const FULL_NAME_RE = /^[\w.-]+\/[\w.-]+$/;
+const COMMIT_SHA_RE = /^[0-9a-f]{40}$/;
+
 export const handler = async (event) => {
   const body = event.body;
   const signature = event.headers?.['x-hub-signature-256'];
@@ -49,7 +55,9 @@ export const handler = async (event) => {
       return { statusCode: 200, body: JSON.stringify({ message: `Ignoring PR action: ${action}` }) };
     }
     repoFullName = payload.repository.full_name;
-    cloneUrl = payload.repository.clone_url;
+    // head.ref lives in the head repository, which is a fork for outside
+    // contributors; cloning the base repo here would scan the wrong code.
+    cloneUrl = payload.pull_request.head.repo?.clone_url ?? payload.repository.clone_url;
     branch = payload.pull_request.head.ref;
     commitSha = payload.pull_request.head.sha;
     prNumber = payload.pull_request.number;
@@ -62,6 +70,15 @@ export const handler = async (event) => {
     sender = payload.sender.login;
   } else {
     return { statusCode: 200, body: JSON.stringify({ message: `Ignoring event: ${githubEvent}` }) };
+  }
+
+  if (
+    !CLONE_URL_RE.test(String(cloneUrl)) ||
+    !FULL_NAME_RE.test(String(repoFullName)) ||
+    !COMMIT_SHA_RE.test(String(commitSha))
+  ) {
+    console.error('Rejecting webhook with unexpected repository fields');
+    return { statusCode: 400, body: JSON.stringify({ error: 'Invalid repository fields' }) };
   }
 
   const scanId = `${Date.now()}-${crypto.randomUUID()}`;

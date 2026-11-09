@@ -24,8 +24,8 @@ const vulnerabilityRules = [
     name: 'NoSQL Injection Risk',
     severity: 'HIGH',
     patterns: [
-      { regex: /\.\s*find\s*\(\s*\{[^}]*\$where/gi, desc: '$where operator in MongoDB query' },
-      { regex: /\.\s*find\s*\(\s*\{[^}]*\$regex\s*:\s*[^/'"]/gi, desc: 'Unsanitized $regex in query' },
+      { regex: /\.\s*find\s*\(\s*\{[^}]{0,300}\$where/gi, desc: '$where operator in MongoDB query' },
+      { regex: /\.\s*find\s*\(\s*\{[^}]{0,300}\$regex\s*:\s*[^/'"]/gi, desc: 'Unsanitized $regex in query' },
       { regex: /\.\s*find\s*\(\s*req\.(body|query|params)/gi, desc: 'Direct user input in MongoDB find()' },
       { regex: /\.\s*findOne\s*\(\s*req\.(body|query|params)/gi, desc: 'Direct user input in MongoDB findOne()' },
       { regex: /\.\s*updateOne\s*\(\s*req\.(body|query|params)/gi, desc: 'Direct user input in MongoDB updateOne()' },
@@ -53,9 +53,9 @@ const vulnerabilityRules = [
     severity: 'HIGH',
     patterns: [
       { regex: /fs\.(readFile|readFileSync|writeFile|writeFileSync|unlink|unlinkSync)\s*\(\s*req\.(body|query|params)/gi, desc: 'User input directly in file operation' },
-      { regex: /fs\.(readFile|readFileSync|writeFile|writeFileSync)\s*\([^)]*\+\s*req\./gi, desc: 'User input concatenated in file path' },
-      { regex: /path\.join\s*\([^)]*req\.(body|query|params)/gi, desc: 'User input in path.join()' },
-      { regex: /['"][^'"]*\.\.\/[^'"]*['"]/g, desc: 'Path traversal sequence detected' }
+      { regex: /fs\.(readFile|readFileSync|writeFile|writeFileSync)\s*\([^)]{0,300}\+\s*req\./gi, desc: 'User input concatenated in file path' },
+      { regex: /path\.join\s*\([^)]{0,300}req\.(body|query|params)/gi, desc: 'User input in path.join()' },
+      { regex: /['"][^'"]{0,300}\.\.\/[^'"]{0,300}['"]/g, desc: 'Path traversal sequence detected' }
     ],
     message: 'Potential path traversal vulnerability. Validate and sanitize file paths.'
   },
@@ -65,7 +65,7 @@ const vulnerabilityRules = [
     severity: 'MEDIUM',
     patterns: [
       { regex: /Math\.random\s*\(\s*\)/g, desc: 'Math.random() is not cryptographically secure' },
-      { regex: /Math\.random\s*\(\s*\).*(?:token|password|secret|key|auth|session)/gi, desc: 'Math.random() used for security-sensitive value' }
+      { regex: /Math\.random\s*\(\s*\)[^\n]{0,300}(?:token|password|secret|key|auth|session)/gi, desc: 'Math.random() used for security-sensitive value' }
     ],
     message: 'Math.random() is not cryptographically secure. Use crypto.randomBytes() or crypto.randomUUID() instead.'
   },
@@ -74,9 +74,9 @@ const vulnerabilityRules = [
     name: 'Sensitive Data Logging',
     severity: 'MEDIUM',
     patterns: [
-      { regex: /console\.(log|info|debug|warn|error)\s*\([^)]*(?:password|passwd|pwd)[^)]*\)/gi, desc: 'Logging password' },
-      { regex: /console\.(log|info|debug|warn|error)\s*\([^)]*(?:token|secret|apikey|api_key)[^)]*\)/gi, desc: 'Logging sensitive token/key' },
-      { regex: /console\.(log|info|debug|warn|error)\s*\([^)]*(?:creditcard|credit_card|ssn|social_security)[^)]*\)/gi, desc: 'Logging sensitive personal data' }
+      { regex: /console\.(log|info|debug|warn|error)\s*\([^)]{0,300}(?:password|passwd|pwd)[^)]{0,300}\)/gi, desc: 'Logging password' },
+      { regex: /console\.(log|info|debug|warn|error)\s*\([^)]{0,300}(?:token|secret|apikey|api_key)[^)]{0,300}\)/gi, desc: 'Logging sensitive token/key' },
+      { regex: /console\.(log|info|debug|warn|error)\s*\([^)]{0,300}(?:creditcard|credit_card|ssn|social_security)[^)]{0,300}\)/gi, desc: 'Logging sensitive personal data' }
     ],
     message: 'Sensitive data may be logged. Remove or mask sensitive information in logs.'
   },
@@ -85,12 +85,12 @@ const vulnerabilityRules = [
     name: 'SQL Injection Risk',
     severity: 'HIGH',
     patterns: [
-      { regex: /query\s*\(\s*['"`]SELECT.*\+/gi, desc: 'String concatenation in SELECT query' },
-      { regex: /query\s*\(\s*['"`]INSERT.*\+/gi, desc: 'String concatenation in INSERT query' },
-      { regex: /query\s*\(\s*['"`]UPDATE.*\+/gi, desc: 'String concatenation in UPDATE query' },
-      { regex: /query\s*\(\s*['"`]DELETE.*\+/gi, desc: 'String concatenation in DELETE query' },
-      { regex: /execute\s*\(\s*['"`].*\$\{/gi, desc: 'Template literal in SQL execute' },
-      { regex: /query\s*\(\s*`[^`]*\$\{/gi, desc: 'Template literal in SQL query' }
+      { regex: /query\s*\(\s*['"`]SELECT[^\n]{0,300}\+/gi, desc: 'String concatenation in SELECT query' },
+      { regex: /query\s*\(\s*['"`]INSERT[^\n]{0,300}\+/gi, desc: 'String concatenation in INSERT query' },
+      { regex: /query\s*\(\s*['"`]UPDATE[^\n]{0,300}\+/gi, desc: 'String concatenation in UPDATE query' },
+      { regex: /query\s*\(\s*['"`]DELETE[^\n]{0,300}\+/gi, desc: 'String concatenation in DELETE query' },
+      { regex: /execute\s*\(\s*['"`][^\n]{0,300}\$\{/gi, desc: 'Template literal in SQL execute' },
+      { regex: /query\s*\(\s*`[^`]{0,300}\$\{/gi, desc: 'Template literal in SQL query' }
     ],
     message: 'Potential SQL injection vulnerability. Use parameterized queries instead.'
   },
@@ -112,9 +112,9 @@ const vulnerabilityRules = [
       { regex: /\beval\s*\(/g, desc: 'Usage of eval()' },
       { regex: /\bexec\s*\(/g, desc: 'Usage of exec()' },
       { regex: /\bexecSync\s*\(/g, desc: 'Usage of execSync()' },
-      { regex: /\bspawn\s*\([^)]*\$\{/g, desc: 'Unvalidated input in spawn()' },
+      { regex: /\bspawn\s*\([^)]{0,300}\$\{/g, desc: 'Unvalidated input in spawn()' },
       { regex: /new\s+Function\s*\(/g, desc: 'Usage of new Function()' },
-      { regex: /child_process.*exec/g, desc: 'child_process exec usage' }
+      { regex: /child_process[^\n]{0,300}exec/g, desc: 'child_process exec usage' }
     ],
     message: 'Insecure function detected. These functions can execute arbitrary code.'
   },
@@ -123,11 +123,11 @@ const vulnerabilityRules = [
     name: 'Security TODO/FIXME',
     severity: 'LOW',
     patterns: [
-      { regex: /\/\/\s*TODO:?\s*.*(?:security|auth|password|token|secret|vuln|hack|fix)/gi, desc: 'Security-related TODO comment' },
-      { regex: /\/\/\s*FIXME:?\s*.*(?:security|auth|password|token|secret|vuln|hack)/gi, desc: 'Security-related FIXME comment' },
-      { regex: /\/\/\s*XXX:?\s*.*(?:security|auth|password|token|secret|vuln|hack)/gi, desc: 'Security-related XXX comment' },
-      { regex: /\/\/\s*HACK:?\s*.*/gi, desc: 'HACK comment found' },
-      { regex: /\/\*[\s\S]*?(?:security|vulnerability|TODO:?\s*auth)[\s\S]*?\*\//gi, desc: 'Security note in block comment' }
+      { regex: /\/\/\s*TODO:?\s*[^\n]{0,300}(?:security|auth|password|token|secret|vuln|hack|fix)/gi, desc: 'Security-related TODO comment' },
+      { regex: /\/\/\s*FIXME:?\s*[^\n]{0,300}(?:security|auth|password|token|secret|vuln|hack)/gi, desc: 'Security-related FIXME comment' },
+      { regex: /\/\/\s*XXX:?\s*[^\n]{0,300}(?:security|auth|password|token|secret|vuln|hack)/gi, desc: 'Security-related XXX comment' },
+      { regex: /\/\/\s*HACK:?\s*[^\n]{0,300}/gi, desc: 'HACK comment found' },
+      { regex: /\/\*(?:(?!\*\/)[\s\S]){0,500}?(?:security|vulnerability|TODO:?\s*auth)(?:(?!\*\/)[\s\S]){0,500}?\*\//gi, desc: 'Security note in block comment' }
     ],
     message: 'Security-related comment found. Ensure this is addressed before production.'
   },
@@ -155,6 +155,9 @@ export const SCAN_LIMITS = {
   maxFiles: 5000,
   maxTotalBytes: 50 * 1024 * 1024,
   maxFindingsPerFile: 500,
+  // Stop before the Lambda timeout (300 s) so the handler can record FAILED
+  // instead of being killed mid-scan and leaving the record in SCANNING.
+  maxScanMs: 240 * 1000,
 };
 
 // Offsets where each line starts, computed once per file.
@@ -248,6 +251,7 @@ export const scanDirectory = (dirpath, extensions = ['.js', '.mjs', '.cjs', '.ts
   let filesScanned = 0;
   let bytesScanned = 0;
   let stopped = false;
+  const deadline = Date.now() + SCAN_LIMITS.maxScanMs;
 
   const scanDir = (currentPath) => {
     const entries = fs.readdirSync(currentPath, { withFileTypes: true });
@@ -274,6 +278,9 @@ export const scanDirectory = (dirpath, extensions = ['.js', '.mjs', '.cjs', '.ts
             console.warn(`Scan limit reached after ${filesScanned} files (${bytesScanned} bytes); remaining files skipped`);
             stopped = true;
             return;
+          }
+          if (Date.now() > deadline) {
+            throw new Error(`Scan exceeded ${SCAN_LIMITS.maxScanMs} ms after ${filesScanned} files`);
           }
           filesScanned++;
           bytesScanned += size;

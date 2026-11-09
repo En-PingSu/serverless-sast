@@ -2,8 +2,8 @@
 set -euo pipefail
 
 DEFAULT_URL=$(aws cloudformation describe-stacks --stack-name sast-scanner --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text 2>/dev/null)
-API_URL="${API_URL:-${DEFAULT_URL:-https://eudvkuuq93.execute-api.us-east-1.amazonaws.com/prod}}"
-SECRET="${WEBHOOK_SECRET:-test123}"
+API_URL="${API_URL:-${DEFAULT_URL:?set API_URL or deploy the sast-scanner stack}}"
+SECRET="${WEBHOOK_SECRET:?set WEBHOOK_SECRET to the GitHubWebhookSecret stack parameter}"
 QUERY_API_TOKEN="${QUERY_API_TOKEN:?set QUERY_API_TOKEN to the QueryApiToken stack parameter}"
 AUTH="Authorization: Bearer $QUERY_API_TOKEN"
 PASS=0
