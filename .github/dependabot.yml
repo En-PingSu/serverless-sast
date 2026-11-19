@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directories:
+      - "/src/scanner"
+      - "/src/dlq-notifier"
+      - "/cs6620/sast/backend"
+      - "/cs6620/pentest/backend"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
